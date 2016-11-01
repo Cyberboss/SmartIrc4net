@@ -29,6 +29,7 @@
 
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -63,7 +64,7 @@ namespace Meebey.SmartIrc4net
         private WriteThread      _WriteThread;
         private IdleWorkerThread _IdleWorkerThread;
         private TcpClient        _TcpClient;
-        private Hashtable        _SendBuffer = Hashtable.Synchronized(new Hashtable());
+        private ConcurrentDictionary<Priority, ConcurrentQueue<string>> _SendBuffer = new ConcurrentDictionary<Priority, ConcurrentQueue<string>>();
         private int              _SendDelay = 200;
         private bool             _IsRegistered;
         private bool             _IsConnected;
@@ -519,11 +520,11 @@ namespace Meebey.SmartIrc4net
 #if LOG4NET
             Logger.Main.Debug("IrcConnection created");
 #endif
-            _SendBuffer[Priority.High]        = Queue.Synchronized(new Queue());
-            _SendBuffer[Priority.AboveMedium] = Queue.Synchronized(new Queue());
-            _SendBuffer[Priority.Medium]      = Queue.Synchronized(new Queue());
-            _SendBuffer[Priority.BelowMedium] = Queue.Synchronized(new Queue());
-            _SendBuffer[Priority.Low]         = Queue.Synchronized(new Queue());
+            _SendBuffer[Priority.High]        = new ConcurrentQueue<string>();
+            _SendBuffer[Priority.AboveMedium] = new ConcurrentQueue<string>();
+            _SendBuffer[Priority.Medium]      = new ConcurrentQueue<string>();
+            _SendBuffer[Priority.BelowMedium] = new ConcurrentQueue<string>();
+            _SendBuffer[Priority.Low]         = new ConcurrentQueue<string>();
 
             // setup own callbacks
             OnReadLine        += new ReadLineEventHandler(_SimpleParser);
@@ -896,9 +897,8 @@ namespace Meebey.SmartIrc4net
                 }
             }
 
-            if (IsConnected &&
-                _ReadThread.Queue.Count > 0) {
-                data = (string)(_ReadThread.Queue.Dequeue());
+            if (IsConnected && _ReadThread.Queue.Count > 0) {
+                _ReadThread.Queue.TryDequeue(out data);
             }
 
             if (data != null && data.Length > 0) {
@@ -933,7 +933,7 @@ namespace Meebey.SmartIrc4net
                 
                 _WriteLine(data);
             } else {
-                ((Queue)_SendBuffer[priority]).Enqueue(data);
+                _SendBuffer[priority].Enqueue(data);
                 _WriteThread.QueuedEvent.Set();
             }
         }
@@ -1068,11 +1068,11 @@ namespace Meebey.SmartIrc4net
 #endif
             private IrcConnection  _Connection;
             private Thread         _Thread;
-            private Queue          _Queue = Queue.Synchronized(new Queue());
+            private ConcurrentQueue<string> _Queue = new ConcurrentQueue<string>();
 
             public AutoResetEvent  QueuedEvent;
 
-            public Queue Queue {
+            public ConcurrentQueue<string> Queue {
                 get {
                     return _Queue;
                 }
@@ -1129,7 +1129,7 @@ namespace Meebey.SmartIrc4net
 
                 // clean up our receive queue else we continue processing old
                 // messages when the read thread is restarted!
-                _Queue.Clear();
+                _Queue = new ConcurrentQueue<string>();
             }
 
             private void _Worker()
@@ -1283,11 +1283,11 @@ namespace Meebey.SmartIrc4net
             // WARNING: complex scheduler, don't even think about changing it!
             private int _CheckBuffer()
             {
-                _HighCount        = ((Queue)_Connection._SendBuffer[Priority.High]).Count;
-                _AboveMediumCount = ((Queue)_Connection._SendBuffer[Priority.AboveMedium]).Count;
-                _MediumCount      = ((Queue)_Connection._SendBuffer[Priority.Medium]).Count;
-                _BelowMediumCount = ((Queue)_Connection._SendBuffer[Priority.BelowMedium]).Count;
-                _LowCount         = ((Queue)_Connection._SendBuffer[Priority.Low]).Count;
+                _HighCount        = _Connection._SendBuffer[Priority.High].Count;
+                _AboveMediumCount = _Connection._SendBuffer[Priority.AboveMedium].Count;
+                _MediumCount      = _Connection._SendBuffer[Priority.Medium].Count;
+                _BelowMediumCount = _Connection._SendBuffer[Priority.BelowMedium].Count;
+                _LowCount         = _Connection._SendBuffer[Priority.Low].Count;
 
                 var msgCount = _HighCount +
                                _AboveMediumCount +
@@ -1323,12 +1323,13 @@ namespace Meebey.SmartIrc4net
             private bool _CheckHighBuffer()
             {
                 if (_HighCount > 0) {
-                    string data = (string)((Queue)_Connection._SendBuffer[Priority.High]).Dequeue();
+                    string data;
+                    _Connection._SendBuffer[Priority.High].TryDequeue(out data);
                     if (_Connection._WriteLine(data) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
-                        ((Queue)_Connection._SendBuffer[Priority.High]).Enqueue(data);
+                        _Connection._SendBuffer[Priority.High].Enqueue(data);
                         return false;
                     }
 
@@ -1345,12 +1346,13 @@ namespace Meebey.SmartIrc4net
             {
                 if ((_AboveMediumCount > 0) &&
                     (_AboveMediumSentCount < _AboveMediumThresholdCount)) {
-                    string data = (string)((Queue)_Connection._SendBuffer[Priority.AboveMedium]).Dequeue();
+                    string data;
+                    _Connection._SendBuffer[Priority.AboveMedium].TryDequeue(out data);
                     if (_Connection._WriteLine(data) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
-                        ((Queue)_Connection._SendBuffer[Priority.AboveMedium]).Enqueue(data);
+                        _Connection._SendBuffer[Priority.AboveMedium].Enqueue(data);
                         return false;
                     }
                     _AboveMediumSentCount++;
@@ -1367,12 +1369,13 @@ namespace Meebey.SmartIrc4net
             {
                 if ((_MediumCount > 0) &&
                     (_MediumSentCount < _MediumThresholdCount)) {
-                    string data = (string)((Queue)_Connection._SendBuffer[Priority.Medium]).Dequeue();
+                    string data;
+                    _Connection._SendBuffer[Priority.Medium].TryDequeue(out data);
                     if (_Connection._WriteLine(data) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
-                        ((Queue)_Connection._SendBuffer[Priority.Medium]).Enqueue(data);
+                        _Connection._SendBuffer[Priority.Medium].Enqueue(data);
                         return false;
                     }
                     _MediumSentCount++;
@@ -1389,12 +1392,13 @@ namespace Meebey.SmartIrc4net
             {
                 if ((_BelowMediumCount > 0) &&
                     (_BelowMediumSentCount < _BelowMediumThresholdCount)) {
-                    string data = (string)((Queue)_Connection._SendBuffer[Priority.BelowMedium]).Dequeue();
+                    string data;
+                    _Connection._SendBuffer[Priority.BelowMedium].TryDequeue(out data);
                     if (_Connection._WriteLine(data) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
-                        ((Queue)_Connection._SendBuffer[Priority.BelowMedium]).Enqueue(data);
+                        _Connection._SendBuffer[Priority.BelowMedium].Enqueue(data);
                         return false;
                     }
                     _BelowMediumSentCount++;
@@ -1417,12 +1421,13 @@ namespace Meebey.SmartIrc4net
                         return true;
                     }
 
-                    string data = (string)((Queue)_Connection._SendBuffer[Priority.Low]).Dequeue();
+                    string data;
+                    _Connection._SendBuffer[Priority.Low].TryDequeue(out data);
                     if (_Connection._WriteLine(data) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
-                        ((Queue)_Connection._SendBuffer[Priority.Low]).Enqueue(data);
+                        _Connection._SendBuffer[Priority.Low].Enqueue(data);
                         return false;
                     }
 

@@ -33,6 +33,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 
@@ -64,12 +65,12 @@ namespace Meebey.SmartIrc4net
         private bool             _AutoNickHandling        = true;
         private bool             _SupportNonRfc;
         private bool             _SupportNonRfcLocked;
-        private StringCollection _Motd                    = new StringCollection();
+        private List<string>     _Motd                    = new List<string>();
         private bool             _MotdReceived;
         private Array            _ReplyCodes              = Enum.GetValues(typeof(ReplyCode));
-        private StringCollection _JoinedChannels          = new StringCollection();
-        private Hashtable        _Channels                = Hashtable.Synchronized(new Hashtable(new CaseInsensitiveHashCodeProvider(), new CaseInsensitiveComparer()));
-        private Hashtable        _IrcUsers                = Hashtable.Synchronized(new Hashtable(new CaseInsensitiveHashCodeProvider(), new CaseInsensitiveComparer()));
+        private List<string>     _JoinedChannels          = new List<string>();
+        private ConcurrentDictionary<string, Channel> _Channels = new ConcurrentDictionary<string, Channel>(StringComparer.CurrentCultureIgnoreCase);
+        private ConcurrentDictionary<string, IrcUser> _IrcUsers = new ConcurrentDictionary<string, IrcUser>(StringComparer.CurrentCultureIgnoreCase);
         private List<ChannelInfo> _ChannelList;
         private Object            _ChannelListSyncRoot = new Object();
         private AutoResetEvent    _ChannelListReceivedEvent;
@@ -413,7 +414,7 @@ namespace Meebey.SmartIrc4net
         /// <summary>
         /// Gets the list of channels we are joined.
         /// </summary>
-        public StringCollection JoinedChannels {
+        public List<string> JoinedChannels {
             get {
                 return _JoinedChannels;
             }
@@ -422,7 +423,7 @@ namespace Meebey.SmartIrc4net
         /// <summary>
         /// Gets the server message of the day.
         /// </summary>
-        public StringCollection Motd {
+        public List<string> Motd {
             get {
                 return _Motd;
             }
@@ -1645,7 +1646,7 @@ namespace Meebey.SmartIrc4net
             if (user != null) {
                 if (user.JoinedChannels.Length == 0) {
                     // he is nowhere else, lets kill him
-                    _IrcUsers.Remove(nickname);
+                    _IrcUsers.TryRemove(nickname, out user);
                     return true;
                 }
             }
@@ -1661,14 +1662,15 @@ namespace Meebey.SmartIrc4net
         private void _RemoveChannelUser(string channelname, string nickname)
         {
             Channel chan = GetChannel(channelname);
-            chan.UnsafeUsers.Remove(nickname);
-            chan.UnsafeOps.Remove(nickname);
-            chan.UnsafeVoices.Remove(nickname);
+            ChannelUser user;
+            chan.UnsafeUsers.TryRemove(nickname, out user);
+            chan.UnsafeOps.TryRemove(nickname, out user);
+            chan.UnsafeVoices.TryRemove(nickname, out user);
             if (SupportNonRfc) {
                 NonRfcChannel nchan = (NonRfcChannel)chan;
-                nchan.UnsafeOwners.Remove(nickname);
-                nchan.UnsafeChannelAdmins.Remove(nickname);
-                nchan.UnsafeHalfops.Remove(nickname);
+                nchan.UnsafeOwners.TryRemove(nickname, out user);
+                nchan.UnsafeChannelAdmins.TryRemove(nickname, out user);
+                nchan.UnsafeHalfops.TryRemove(nickname, out user);
             } 
         }
 
@@ -1693,21 +1695,20 @@ namespace Meebey.SmartIrc4net
                         if (add) {
                             if (ActiveChannelSyncing && channel != null) {
                                 // sanity check
-                                if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
+                                if (cuser != null) {
                                     // update the op list
-                                    try {
-                                        channel.UnsafeOps.Add(temp, GetIrcUser(temp));
+                                    if (channel.UnsafeOps.TryAdd(temp, cuser)) {
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("added op: "+temp+" to: "+ircdata.Channel);
 #endif
-                                    } catch (ArgumentException) {
+                                    } else {
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("duplicate op: "+temp+" in: "+ircdata.Channel+" not added");
 #endif
                                     }
-                                    
+
                                     // update the user op status
-                                    ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
                                     cuser.IsOp = true;
 #if LOG4NET
                                     Logger.ChannelSyncing.Debug("set op status: " + temp + " for: "+ircdata.Channel);
@@ -1726,14 +1727,15 @@ namespace Meebey.SmartIrc4net
                         if (remove) {
                             if (ActiveChannelSyncing && channel != null) {
                                 // sanity check
-                                if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
+                                if (cuser != null) {
                                     // update the op list
-                                    channel.UnsafeOps.Remove(temp);
+                                    ChannelUser u;
+                                    channel.UnsafeOps.TryRemove(temp, out u);
 #if LOG4NET
                                     Logger.ChannelSyncing.Debug("removed op: "+temp+" from: "+ircdata.Channel);
 #endif
                                     // update the user op status
-                                    ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
                                     cuser.IsOp = false;
 #if LOG4NET
                                     Logger.ChannelSyncing.Debug("unset op status: " + temp + " for: "+ircdata.Channel);
@@ -1755,21 +1757,20 @@ namespace Meebey.SmartIrc4net
                             if (add) {
                                 if (ActiveChannelSyncing && channel != null) {
                                     // sanity check
-                                    if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                    NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
+                                    if (cuser != null) {
                                         // update the owner list
-                                        try {
-                                            ((NonRfcChannel)channel).UnsafeOwners.Add(temp, GetIrcUser(temp));
+                                        if (channel.UnsafeOps.TryAdd(temp, cuser)) {
 #if LOG4NET
                                             Logger.ChannelSyncing.Debug("added owner: "+temp+" to: "+ircdata.Channel);
 #endif
-                                        } catch (ArgumentException) {
+                                        } else {
 #if LOG4NET
                                             Logger.ChannelSyncing.Debug("duplicate owner: "+temp+" in: "+ircdata.Channel+" not added");
 #endif
                                         }
 
                                         // update the user owner status
-                                        NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
                                         cuser.IsOwner = true;
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("set owner status: " + temp + " for: "+ircdata.Channel);
@@ -1788,14 +1789,15 @@ namespace Meebey.SmartIrc4net
                             if (remove) {
                                 if (ActiveChannelSyncing && channel != null) {
                                     // sanity check
-                                    if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                    NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
+                                    if (cuser != null) {
                                         // update the owner list
-                                        ((NonRfcChannel)channel).UnsafeOwners.Remove(temp);
+                                        ChannelUser u;
+                                        ((NonRfcChannel)channel).UnsafeOwners.TryRemove(temp, out u);
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("removed owner: "+temp+" from: "+ircdata.Channel);
 #endif
                                         // update the user owner status
-                                        NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
                                         cuser.IsOwner = false;
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("unset owner status: " + temp + " for: "+ircdata.Channel);
@@ -1818,21 +1820,20 @@ namespace Meebey.SmartIrc4net
                             if (add) {
                                 if (ActiveChannelSyncing && channel != null) {
                                     // sanity check
-                                    if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                    NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
+                                    if (cuser != null) {
                                         // update the channel admin list
-                                        try {
-                                            ((NonRfcChannel)channel).UnsafeChannelAdmins.Add(temp, GetIrcUser(temp));
+                                        if (((NonRfcChannel)channel).UnsafeChannelAdmins.TryAdd(temp, cuser)) {
 #if LOG4NET
                                             Logger.ChannelSyncing.Debug("added channel admin: "+temp+" to: "+ircdata.Channel);
 #endif
-                                        } catch (ArgumentException) {
+                                        } else {
 #if LOG4NET
                                             Logger.ChannelSyncing.Debug("duplicate channel admin: "+temp+" in: "+ircdata.Channel+" not added");
 #endif
                                         }
 
                                         // update the user channel admin status
-                                        NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
                                         cuser.IsChannelAdmin = true;
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("set channel admin status: " + temp + " for: "+ircdata.Channel);
@@ -1851,14 +1852,15 @@ namespace Meebey.SmartIrc4net
                             if (remove) {
                                 if (ActiveChannelSyncing && channel != null) {
                                     // sanity check
-                                    if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                    NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
+                                    if (cuser != null) {
                                         // update the channel admin list
-                                        ((NonRfcChannel)channel).UnsafeChannelAdmins.Remove(temp);
+                                        ChannelUser u;
+                                        ((NonRfcChannel)channel).UnsafeChannelAdmins.TryRemove(temp, out u);
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("removed channel admin: "+temp+" from: "+ircdata.Channel);
 #endif
                                         // update the user channel admin status
-                                        NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
                                         cuser.IsChannelAdmin = false;
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("unset channel admin status: " + temp + " for: "+ircdata.Channel);
@@ -1881,21 +1883,20 @@ namespace Meebey.SmartIrc4net
                             if (add) {
                                 if (ActiveChannelSyncing && channel != null) {
                                     // sanity check
-                                    if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                    NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
+                                    if (cuser != null) {
                                         // update the halfop list
-                                        try {
-                                            ((NonRfcChannel)channel).UnsafeHalfops.Add(temp, GetIrcUser(temp));
+                                        if (((NonRfcChannel)channel).UnsafeHalfops.TryAdd(temp, cuser)) {
 #if LOG4NET
                                             Logger.ChannelSyncing.Debug("added halfop: "+temp+" to: "+ircdata.Channel);
 #endif
-                                        } catch (ArgumentException) {
+                                        } else {
 #if LOG4NET
                                             Logger.ChannelSyncing.Debug("duplicate halfop: "+temp+" in: "+ircdata.Channel+" not added");
 #endif
                                         }
                                         
                                         // update the user halfop status
-                                        NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
                                         cuser.IsHalfop = true;
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("set halfop status: " + temp + " for: "+ircdata.Channel);
@@ -1914,14 +1915,15 @@ namespace Meebey.SmartIrc4net
                             if (remove) {
                                 if (ActiveChannelSyncing && channel != null) {
                                     // sanity check
-                                    if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                    NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
+                                    if (cuser != null) {
                                         // update the halfop list
-                                        ((NonRfcChannel)channel).UnsafeHalfops.Remove(temp);
+                                        ChannelUser u;
+                                        ((NonRfcChannel)channel).UnsafeHalfops.TryRemove(temp, out u);
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("removed halfop: "+temp+" from: "+ircdata.Channel);
 #endif
                                         // update the user halfop status
-                                        NonRfcChannelUser cuser = (NonRfcChannelUser)GetChannelUser(ircdata.Channel, temp);
                                         cuser.IsHalfop = false;
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("unset halfop status: " + temp + " for: "+ircdata.Channel);
@@ -1943,21 +1945,20 @@ namespace Meebey.SmartIrc4net
                         if (add) {
                             if (ActiveChannelSyncing && channel != null) {
                                 // sanity check
-                                if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
+                                if (cuser != null) {
                                     // update the voice list
-                                    try {
-                                        channel.UnsafeVoices.Add(temp, GetIrcUser(temp));
+                                    if (channel.UnsafeVoices.TryAdd(temp, cuser)) {
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("added voice: "+temp+" to: "+ircdata.Channel);
 #endif
-                                    } catch (ArgumentException) {
+                                    } else {
 #if LOG4NET
                                         Logger.ChannelSyncing.Debug("duplicate voice: "+temp+" in: "+ircdata.Channel+" not added");
 #endif
                                     }
                                     
                                     // update the user voice status
-                                    ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
                                     cuser.IsVoice = true;
 #if LOG4NET
                                     Logger.ChannelSyncing.Debug("set voice status: " + temp + " for: "+ircdata.Channel);
@@ -1976,14 +1977,15 @@ namespace Meebey.SmartIrc4net
                         if (remove) {
                             if (ActiveChannelSyncing && channel != null) {
                                 // sanity check
-                                if (GetChannelUser(ircdata.Channel, temp) != null) {
+                                ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
+                                if (cuser != null) {
                                     // update the voice list
-                                    channel.UnsafeVoices.Remove(temp);
+                                    ChannelUser u;
+                                    channel.UnsafeVoices.TryRemove(temp, out u);
 #if LOG4NET
                                     Logger.ChannelSyncing.Debug("removed voice: "+temp+" from: "+ircdata.Channel);
 #endif
                                     // update the user voice status
-                                    ChannelUser cuser = GetChannelUser(ircdata.Channel, temp);
                                     cuser.IsVoice = false;
 #if LOG4NET
                                     Logger.ChannelSyncing.Debug("unset voice status: " + temp + " for: "+ircdata.Channel);
@@ -2222,7 +2224,7 @@ namespace Meebey.SmartIrc4net
                     Logger.ChannelSyncing.Debug("joining channel: "+channelname);
 #endif
                     channel = CreateChannel(channelname);
-                    _Channels.Add(channelname, channel);
+                    _Channels.TryAdd(channelname, channel);
                     // request channel mode
                     RfcMode(channelname);
                     // request wholist
@@ -2253,7 +2255,7 @@ namespace Meebey.SmartIrc4net
                     ircuser = new IrcUser(who, this);
                     ircuser.Ident = ircdata.Ident;
                     ircuser.Host  = ircdata.Host;
-                    _IrcUsers.Add(who, ircuser);
+                    _IrcUsers.TryAdd(who, ircuser);
                 }
 
                 // HACK: IRCnet's anonymous channel mode feature breaks our
@@ -2295,7 +2297,8 @@ namespace Meebey.SmartIrc4net
 #if LOG4NET
                     Logger.ChannelSyncing.Debug("parting channel: "+channel);
 #endif
-                    _Channels.Remove(channel);
+                    Channel chan;
+                    _Channels.TryRemove(channel, out chan);
                 } else {
 #if LOG4NET
                     Logger.ChannelSyncing.Debug(who+" parts channel: "+channel);
@@ -2344,7 +2347,8 @@ namespace Meebey.SmartIrc4net
             if (ActiveChannelSyncing) {
                 if (isme) {
                     Channel channel = GetChannel(channelname);
-                    _Channels.Remove(channelname);
+                    Channel chan;
+                    _Channels.TryRemove(channelname, out chan);
                     if (_AutoRejoinOnKick) {
                         RfcJoin(channel.Name, channel.Key);
                     }
@@ -2540,9 +2544,10 @@ namespace Meebey.SmartIrc4net
                     ircuser.Nick = newnickname;
                     // remove the old entry 
                     // remove first to avoid duplication, Foo -> foo
-                    _IrcUsers.Remove(oldnickname);
+                    IrcUser oldUser;
+                    _IrcUsers.TryRemove(oldnickname, out oldUser);
                     // add him as new entry and new nickname as key
-                    _IrcUsers.Add(newnickname, ircuser);
+                    _IrcUsers.TryAdd(newnickname, ircuser);
 #if LOG4NET
                     Logger.ChannelSyncing.Debug("updated nickname of: "+oldnickname+" to: "+newnickname);
 #endif
@@ -2553,30 +2558,31 @@ namespace Meebey.SmartIrc4net
                         channel     = GetChannel(channelname);
                         channeluser = GetChannelUser(channelname, oldnickname);
                         // remove first to avoid duplication, Foo -> foo
-                        channel.UnsafeUsers.Remove(oldnickname);
-                        channel.UnsafeUsers.Add(newnickname, channeluser);
+                        ChannelUser oldChanUser;
+                        channel.UnsafeUsers.TryRemove(oldnickname, out oldChanUser);
+                        channel.UnsafeUsers.TryAdd(newnickname, channeluser);
                         if (SupportNonRfc && ((NonRfcChannelUser)channeluser).IsOwner) {
                             NonRfcChannel nchannel = (NonRfcChannel)channel;
-                            nchannel.UnsafeOwners.Remove(oldnickname);
-                            nchannel.UnsafeOwners.Add(newnickname, channeluser);
+                            nchannel.UnsafeOwners.TryRemove(oldnickname, out oldChanUser);
+                            nchannel.UnsafeOwners.TryAdd(newnickname, channeluser);
                         }
                         if (SupportNonRfc && ((NonRfcChannelUser)channeluser).IsChannelAdmin) {
                             NonRfcChannel nchannel = (NonRfcChannel)channel;
-                            nchannel.UnsafeChannelAdmins.Remove(oldnickname);
-                            nchannel.UnsafeChannelAdmins.Add(newnickname, channeluser);
+                            nchannel.UnsafeChannelAdmins.TryRemove(oldnickname, out oldChanUser);
+                            nchannel.UnsafeChannelAdmins.TryAdd(newnickname, channeluser);
                         }
                         if (channeluser.IsOp) {
-                            channel.UnsafeOps.Remove(oldnickname);
-                            channel.UnsafeOps.Add(newnickname, channeluser);
+                            channel.UnsafeOps.TryRemove(oldnickname, out oldChanUser);
+                            channel.UnsafeOps.TryAdd(newnickname, channeluser);
                         }
                         if (SupportNonRfc && ((NonRfcChannelUser)channeluser).IsHalfop) {
                             NonRfcChannel nchannel = (NonRfcChannel)channel;
-                            nchannel.UnsafeHalfops.Remove(oldnickname);
-                            nchannel.UnsafeHalfops.Add(newnickname, channeluser);
+                            nchannel.UnsafeHalfops.TryRemove(oldnickname, out oldChanUser);
+                            nchannel.UnsafeHalfops.TryAdd(newnickname, channeluser);
                         }
                         if (channeluser.IsVoice) {
-                            channel.UnsafeVoices.Remove(oldnickname);
-                            channel.UnsafeVoices.Add(newnickname, channeluser);
+                            channel.UnsafeVoices.TryRemove(oldnickname, out oldChanUser);
+                            channel.UnsafeVoices.TryAdd(newnickname, channeluser);
                         }
                     }
                 }
@@ -2791,7 +2797,7 @@ namespace Meebey.SmartIrc4net
                         Logger.ChannelSyncing.Debug("creating IrcUser: "+nickname+" because he doesn't exist yet");
 #endif
                         ircuser = new IrcUser(nickname, this);
-                        _IrcUsers.Add(nickname, ircuser);
+                        _IrcUsers.TryAdd(nickname, ircuser);
                     }
 
                     if (channeluser == null) {
@@ -2802,33 +2808,33 @@ namespace Meebey.SmartIrc4net
                         channeluser = CreateChannelUser(channelname, ircuser);
                         Channel channel = GetChannel(channelname);
                         
-                        channel.UnsafeUsers.Add(nickname, channeluser);
+                        channel.UnsafeUsers.TryAdd(nickname, channeluser);
                         if (SupportNonRfc && owner) {
-                            ((NonRfcChannel)channel).UnsafeOwners.Add(nickname, channeluser);
+                            ((NonRfcChannel)channel).UnsafeOwners.TryAdd(nickname, channeluser);
 #if LOG4NET
                             Logger.ChannelSyncing.Debug("added owner: "+nickname+" to: "+channelname);
 #endif
                         }
                         if (SupportNonRfc && chanadmin) {
-                            ((NonRfcChannel)channel).UnsafeChannelAdmins.Add(nickname, channeluser);
+                            ((NonRfcChannel)channel).UnsafeChannelAdmins.TryAdd(nickname, channeluser);
 #if LOG4NET
                             Logger.ChannelSyncing.Debug("added channel admin: "+nickname+" to: "+channelname);
 #endif
                         }
                         if (op) {
-                            channel.UnsafeOps.Add(nickname, channeluser);
+                            channel.UnsafeOps.TryAdd(nickname, channeluser);
 #if LOG4NET
                             Logger.ChannelSyncing.Debug("added op: "+nickname+" to: "+channelname);
 #endif
                         }
                         if (SupportNonRfc && halfop)  {
-                            ((NonRfcChannel)channel).UnsafeHalfops.Add(nickname, channeluser);
+                            ((NonRfcChannel)channel).UnsafeHalfops.TryAdd(nickname, channeluser);
 #if LOG4NET
                             Logger.ChannelSyncing.Debug("added halfop: "+nickname+" to: "+channelname);
 #endif
                         }
                         if (voice) {
-                            channel.UnsafeVoices.Add(nickname, channeluser);
+                            channel.UnsafeVoices.TryAdd(nickname, channeluser);
 #if LOG4NET
                             Logger.ChannelSyncing.Debug("added voice: "+nickname+" to: "+channelname);
 #endif
