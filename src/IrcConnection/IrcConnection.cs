@@ -40,6 +40,7 @@ using System.Text;
 using System.Security.Cryptography.X509Certificates;
 using System.Security.Authentication;
 using System.Threading;
+using System.Threading.Tasks;
 using Starksoft.Net.Proxy;
 
 namespace Meebey.SmartIrc4net
@@ -610,11 +611,11 @@ namespace Meebey.SmartIrc4net
                         );
                     }
                     
-                    _TcpClient.Connect(_ProxyHost, _ProxyPort);
+                    _TcpClient.ConnectAsync(_ProxyHost, _ProxyPort).Wait();
                     proxyClient.TcpClient = _TcpClient;
                     proxyClient.CreateConnection(Address, port);
                 } else {
-                    _TcpClient.Connect(Address, port);
+                    _TcpClient.ConnectAsync(Address, port).Wait();
                 }
                 
                 Stream stream = _TcpClient.GetStream();
@@ -661,11 +662,11 @@ namespace Meebey.SmartIrc4net
                         if (_SslClientCertificate != null) {
                             var certs = new X509Certificate2Collection();
                             certs.Add(_SslClientCertificate);
-                            sslStream.AuthenticateAsClient(Address, certs,
-                                                           SslProtocols.Default,
-                                                           false);
+                            sslStream.AuthenticateAsClientAsync(Address, certs,
+                                                                SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12,
+                                                                false).Wait();
                         } else {
-                            sslStream.AuthenticateAsClient(Address);
+                            sslStream.AuthenticateAsClientAsync(Address).Wait();
                         }
                     } catch (IOException ex) {
 #if LOG4NET

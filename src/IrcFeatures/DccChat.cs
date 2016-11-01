@@ -25,6 +25,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Net.Sockets;
 
 namespace Meebey.SmartIrc4net
@@ -114,7 +115,9 @@ namespace Meebey.SmartIrc4net
             if (!Valid)
                 return;
             if (DccServer != null) {
-                Connection = DccServer.AcceptTcpClient();
+                Task<TcpClient> acceptor = DccServer.AcceptTcpClientAsync();
+                acceptor.Wait();
+                Connection = acceptor.Result;
                 RemoteEndPoint = (IPEndPoint)Connection.Client.RemoteEndPoint;
                 DccServer.Stop();
                 isConnected = true;
@@ -162,7 +165,7 @@ namespace Meebey.SmartIrc4net
                     Irc.SendMessage(SendType.CtcpRequest, User, "DCC CHAT chat " + HostToDccInt(ExternalIPAdress).ToString() + " " + LocalEndPoint.Port);
                 } else {
                     Connection = new TcpClient();
-                    Connection.Connect(RemoteEndPoint);
+                    Connection.ConnectAsync(RemoteEndPoint.Address, RemoteEndPoint.Port).Wait();
                     isConnected = true;
                 }
                 return true;

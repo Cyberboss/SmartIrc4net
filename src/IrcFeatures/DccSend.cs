@@ -25,6 +25,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Net.Sockets;
 
 namespace Meebey.SmartIrc4net
@@ -109,7 +110,9 @@ namespace Meebey.SmartIrc4net
             if (!Valid)
                 return;
             if (DccServer != null) {
-                Connection = DccServer.AcceptTcpClient();
+                Task<TcpClient> acceptorTask = DccServer.AcceptTcpClientAsync();
+                acceptorTask.Wait();
+                Connection = acceptorTask.Result;
                 RemoteEndPoint = (IPEndPoint)Connection.Client.RemoteEndPoint;
                 DccServer.Stop();
                 isConnected = true;
@@ -196,7 +199,7 @@ namespace Meebey.SmartIrc4net
                 } else {
                     if(offset==0) {
                         Connection = new TcpClient();
-                        Connection.Connect(RemoteEndPoint);
+                        Connection.ConnectAsync(RemoteEndPoint.Address, RemoteEndPoint.Port).Wait();
                         isConnected = true;
                     } else {
                         if(_File.CanSeek) {
