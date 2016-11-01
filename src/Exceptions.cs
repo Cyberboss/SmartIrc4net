@@ -27,12 +27,16 @@
  */
 
 using System;
+#if !NETCORE
 using System.Runtime.Serialization;
+#endif
 
 namespace Meebey.SmartIrc4net
 {
     /// <threadsafety static="true" instance="true" />
+#if !NETCORE
     [Serializable()]
+#endif
     public class SmartIrc4netException : Exception
     {
         public SmartIrc4netException() : base()
@@ -46,14 +50,18 @@ namespace Meebey.SmartIrc4net
         public SmartIrc4netException(string message, Exception e) : base(message, e)
         {
         }
-        
+
+#if !NETCORE
         protected SmartIrc4netException(SerializationInfo info, StreamingContext context) : base(info, context)
         {
         }
+#endif
     }
     
     /// <threadsafety static="true" instance="true" />
+#if !NETCORE
     [Serializable()]
+#endif
     public class ConnectionException : SmartIrc4netException
     {
         public ConnectionException() : base()
@@ -67,14 +75,18 @@ namespace Meebey.SmartIrc4net
         public ConnectionException(string message, Exception e) : base(message, e)
         {
         }
-        
+
+#if !NETCORE
         protected ConnectionException(SerializationInfo info, StreamingContext context) : base(info, context)
         {
         }
+#endif
     }
     
     /// <threadsafety static="true" instance="true" />
+#if !NETCORE
     [Serializable()]
+#endif
     public class CouldNotConnectException : ConnectionException
     {
         public CouldNotConnectException() : base()
@@ -89,13 +101,17 @@ namespace Meebey.SmartIrc4net
         {
         }
 
+#if !NETCORE
         protected CouldNotConnectException(SerializationInfo info, StreamingContext context) : base(info, context)
         {
         }
+#endif
     }
 
     /// <threadsafety static="true" instance="true" />
+#if !NETCORE
     [Serializable()]
+#endif
     public class NotConnectedException : ConnectionException
     {
         public NotConnectedException() : base()
@@ -109,14 +125,18 @@ namespace Meebey.SmartIrc4net
         public NotConnectedException(string message, Exception e) : base(message, e)
         {
         }
-        
+
+#if !NETCORE
         protected NotConnectedException(SerializationInfo info, StreamingContext context) : base(info, context)
         {
         }
+#endif
     }
 
     /// <threadsafety static="true" instance="true" />
+#if !NETCORE
     [Serializable()]
+#endif
     public class AlreadyConnectedException : ConnectionException
     {
         public AlreadyConnectedException() : base()
@@ -130,9 +150,11 @@ namespace Meebey.SmartIrc4net
         public AlreadyConnectedException(string message, Exception e) : base(message, e)
         {
         }
-        
+
+#if !NETCORE
         protected AlreadyConnectedException(SerializationInfo info, StreamingContext context) : base(info, context)
         {
         }
+#endif
     }
 }
