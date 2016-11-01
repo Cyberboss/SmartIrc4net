@@ -194,10 +194,13 @@ namespace Meebey.SmartIrc4net
         #region protected Helper Functions
         protected long HostToDccInt(IPAddress ip)
         {
-            long temp = (ip.Address & 0xff) << 24;
-            temp |= (ip.Address & 0xff00)  << 8;
-            temp |= (ip.Address >> 8)  & 0xff00;
-            temp |= (ip.Address >> 24)  & 0xff;
+            // FIXME: breaks with IPv6
+            byte[] ipBytes = ip.GetAddressBytes();
+            long temp =
+                ipBytes[0] |
+                (ipBytes[1] << 8) |
+                (ipBytes[2] << 16) |
+                (ipBytes[3] << 24);
             return temp;
         }
         
