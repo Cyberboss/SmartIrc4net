@@ -720,18 +720,18 @@ namespace Meebey.SmartIrc4net
             } catch (Exception e) {
                 if (_Reader != null) {
                     try {
-                        _Reader.Close();
+                        _Reader.Dispose();
                     } catch (ObjectDisposedException) {
                     }
                 }
                 if (_Writer != null) {
                     try {
-                        _Writer.Close();
+                        _Writer.Dispose();
                     } catch (ObjectDisposedException) {
                     }
                 }
                 if (_TcpClient != null) {
-                    _TcpClient.Close();
+                    _TcpClient.Dispose();
                 }
                 _IsConnected = false;
                 IsConnectionError = true;
@@ -819,7 +819,7 @@ namespace Meebey.SmartIrc4net
             _IdleWorkerThread.Stop();
             _ReadThread.Stop();
             _WriteThread.Stop();
-            _TcpClient.Close();
+            _TcpClient.Dispose();
             _IsConnected = false;
             _IsRegistered = false;
             
@@ -1122,7 +1122,7 @@ namespace Meebey.SmartIrc4net
                 _Logger.Debug("Stop(): closing reader...");
 #endif
                 try {
-                    _Connection._Reader.Close();
+                    _Connection._Reader.Dispose();
                 } catch (ObjectDisposedException) {
                 }
 
@@ -1232,7 +1232,7 @@ namespace Meebey.SmartIrc4net
                 _Thread.Join();
                 
                 try {
-                    _Connection._Writer.Close();
+                    _Connection._Writer.Dispose();
                 } catch (ObjectDisposedException) {
                 }
             }
