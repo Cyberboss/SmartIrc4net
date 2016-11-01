@@ -623,25 +623,22 @@ namespace Meebey.SmartIrc4net
                 if (_UseSsl) {
                     RemoteCertificateValidationCallback certValidation;
                     if (_ValidateServerCertificate) {
-                        certValidation = ServicePointManager.ServerCertificateValidationCallback;
-                        if (certValidation == null) {
-                            certValidation = delegate(object sender,
-                                X509Certificate certificate,
-                                X509Chain chain,
-                                SslPolicyErrors sslPolicyErrors) {
-                                if (sslPolicyErrors == SslPolicyErrors.None) {
-                                    return true;
-                                }
+                        certValidation = delegate(object sender,
+                            X509Certificate certificate,
+                            X509Chain chain,
+                            SslPolicyErrors sslPolicyErrors) {
+                            if (sslPolicyErrors == SslPolicyErrors.None) {
+                                return true;
+                            }
 
 #if LOG4NET
-                                Logger.Connection.Error(
-                                    "Connect(): Certificate error: " +
-                                    sslPolicyErrors
-                                );
+                            Logger.Connection.Error(
+                                "Connect(): Certificate error: " +
+                                sslPolicyErrors
+                            );
 #endif
-                                return false;
-                            };
-                        }
+                            return false;
+                        };
                     } else {
                         certValidation = delegate { return true; };
                     }
