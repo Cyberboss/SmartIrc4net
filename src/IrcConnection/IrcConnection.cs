@@ -930,7 +930,7 @@ namespace Meebey.SmartIrc4net
                     throw new NotConnectedException();
                 }
                 
-                _WriteLine(data);
+                _WriteLine(data, default(CancellationToken));
             } else {
                 _SendBuffer[priority].Enqueue(data);
                 _WriteThread.QueuedEvent.Set();
@@ -946,13 +946,13 @@ namespace Meebey.SmartIrc4net
             WriteLine(data, Priority.Medium);
         }
 
-        private bool _WriteLine(string data)
+        private bool _WriteLine(string data, CancellationToken cancelToken)
         {
             if (IsConnected) {
                 try {
                     lock (_Writer) {
-                        _Writer.Write(data + "\r\n");
-                        _Writer.Flush();
+                        _Writer.WriteLineAsync(data + "\r\n").Wait(cancelToken);
+                        _Writer.FlushAsync().Wait(cancelToken);
                     }
                 } catch (IOException) {
 #if LOG4NET
@@ -1068,6 +1068,7 @@ namespace Meebey.SmartIrc4net
             private IrcConnection  _Connection;
             private Thread         _Thread;
             private ConcurrentQueue<string> _Queue = new ConcurrentQueue<string>();
+            private CancellationTokenSource _CancelSource = new CancellationTokenSource();
 
             public AutoResetEvent  QueuedEvent;
 
@@ -1106,13 +1107,12 @@ namespace Meebey.SmartIrc4net
 #if LOG4NET
                 _Logger.Debug("Stop()");
 #endif
-                
+
 #if LOG4NET
-                _Logger.Debug("Stop(): aborting thread...");
+                _Logger.Debug("Stop(): cancelling token...");
 #endif
-                _Thread.Abort();
-                // make sure we close the stream after the thread is gone, else
-                // the thread will think the connection is broken!
+                _CancelSource.Cancel();
+
 #if LOG4NET
                 _Logger.Debug("Stop(): joining thread...");
 #endif
@@ -1137,16 +1137,22 @@ namespace Meebey.SmartIrc4net
                 Logger.Socket.Debug("ReadThread started");
 #endif
                 try {
-                    string data = "";
+                    Task<string> readTask;
+                    CancellationToken cancelToken = _CancelSource.Token;
                     try {
-                        while (_Connection.IsConnected &&
-                               ((data = _Connection._Reader.ReadLine()) != null)) {
-                            _Queue.Enqueue(data);
+                        while (_Connection.IsConnected) {
+                            readTask = _Connection._Reader.ReadLineAsync();
+                            readTask.Wait(cancelToken);
+                            _Queue.Enqueue(readTask.Result);
                             QueuedEvent.Set();
 #if LOG4NET
-                            Logger.Socket.Debug("received: \""+data+"\"");
+                            Logger.Socket.Debug("received: \""+readTask.Result+"\"");
 #endif
                         }
+                    } catch (OperationCanceledException e) {
+#if LOG4NET
+                        Logger.Socket.Warn("ReadThread cancelled");
+#endif
                     } catch (IOException e) {
 #if LOG4NET
                         Logger.Socket.Warn("IOException: "+e.Message);
@@ -1161,11 +1167,6 @@ namespace Meebey.SmartIrc4net
                             _Connection.IsConnectionError = true;
                         }
                     }
-                } catch (ThreadAbortException) {
-                    Thread.ResetAbort();
-#if LOG4NET
-                    Logger.Socket.Debug("ReadThread aborted");
-#endif
                 } catch (Exception ex) {
 #if LOG4NET
                     Logger.Socket.Error(ex);
@@ -1193,6 +1194,7 @@ namespace Meebey.SmartIrc4net
             private int            _MediumThresholdCount      = 2;
             private int            _BelowMediumThresholdCount = 1;
             private int            _BurstCount;
+            private CancellationTokenSource _CancelSource = new CancellationTokenSource();
 
             public AutoResetEvent QueuedEvent;
 
@@ -1225,10 +1227,7 @@ namespace Meebey.SmartIrc4net
 #if LOG4NET
                 Logger.Connection.Debug("Stopping WriteThread...");
 #endif
-                
-                _Thread.Abort();
-                // make sure we close the stream after the thread is gone, else
-                // the thread will think the connection is broken!
+                _CancelSource.Cancel();
                 _Thread.Join();
                 
                 try {
@@ -1244,14 +1243,23 @@ namespace Meebey.SmartIrc4net
 #endif
                 try {
                     try {
+                        CancellationToken cancelToken = _CancelSource.Token;
+                        WaitHandle[] waitHandles = {cancelToken.WaitHandle, QueuedEvent};
                         while (_Connection.IsConnected) {
-                            QueuedEvent.WaitOne();
+                            WaitHandle.WaitAny(waitHandles);
+                            if (cancelToken.IsCancellationRequested) {
+                                break;
+                            }
                             var isBufferEmpty = false;
                             do {
-                                isBufferEmpty = _CheckBuffer() == 0;
+                                isBufferEmpty = _CheckBuffer(cancelToken) == 0;
                                 Thread.Sleep(_Connection._SendDelay);
                             } while (!isBufferEmpty);
                         }
+                    } catch (OperationCanceledException e) {
+#if LOG4NET
+                        Logger.Socket.Warn("WriteThread cancelled");
+#endif
                     } catch (IOException e) {
 #if LOG4NET
                         Logger.Socket.Warn("IOException: " + e.Message);
@@ -1266,11 +1274,6 @@ namespace Meebey.SmartIrc4net
                             _Connection.IsConnectionError = true;
                         }
                     }
-                } catch (ThreadAbortException) {
-                    Thread.ResetAbort();
-#if LOG4NET
-                    Logger.Socket.Debug("WriteThread aborted");
-#endif
                 } catch (Exception ex) {
 #if LOG4NET
                     Logger.Socket.Error(ex);
@@ -1280,7 +1283,7 @@ namespace Meebey.SmartIrc4net
 
 #region WARNING: complex scheduler, don't even think about changing it!
             // WARNING: complex scheduler, don't even think about changing it!
-            private int _CheckBuffer()
+            private int _CheckBuffer(CancellationToken cancelToken)
             {
                 _HighCount        = _Connection._SendBuffer[Priority.High].Count;
                 _AboveMediumCount = _Connection._SendBuffer[Priority.AboveMedium].Count;
@@ -1299,11 +1302,11 @@ namespace Meebey.SmartIrc4net
                     return msgCount;
                 }
 
-                if (_CheckHighBuffer() &&
-                    _CheckAboveMediumBuffer() &&
-                    _CheckMediumBuffer() &&
-                    _CheckBelowMediumBuffer() &&
-                    _CheckLowBuffer()) {
+                if (_CheckHighBuffer(cancelToken) &&
+                    _CheckAboveMediumBuffer(cancelToken) &&
+                    _CheckMediumBuffer(cancelToken) &&
+                    _CheckBelowMediumBuffer(cancelToken) &&
+                    _CheckLowBuffer(cancelToken)) {
                     // everything is sent, resetting all counters
                     _AboveMediumSentCount = 0;
                     _MediumSentCount      = 0;
@@ -1319,12 +1322,12 @@ namespace Meebey.SmartIrc4net
                 return msgCount;
             }
 
-            private bool _CheckHighBuffer()
+            private bool _CheckHighBuffer(CancellationToken cancelToken)
             {
                 if (_HighCount > 0) {
                     string data;
                     _Connection._SendBuffer[Priority.High].TryDequeue(out data);
-                    if (_Connection._WriteLine(data) == false) {
+                    if (_Connection._WriteLine(data, cancelToken) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
@@ -1341,13 +1344,13 @@ namespace Meebey.SmartIrc4net
                 return true;
             }
 
-            private bool _CheckAboveMediumBuffer()
+            private bool _CheckAboveMediumBuffer(CancellationToken cancelToken)
             {
                 if ((_AboveMediumCount > 0) &&
                     (_AboveMediumSentCount < _AboveMediumThresholdCount)) {
                     string data;
                     _Connection._SendBuffer[Priority.AboveMedium].TryDequeue(out data);
-                    if (_Connection._WriteLine(data) == false) {
+                    if (_Connection._WriteLine(data, cancelToken) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
@@ -1364,13 +1367,13 @@ namespace Meebey.SmartIrc4net
                 return true;
             }
 
-            private bool _CheckMediumBuffer()
+            private bool _CheckMediumBuffer(CancellationToken cancelToken)
             {
                 if ((_MediumCount > 0) &&
                     (_MediumSentCount < _MediumThresholdCount)) {
                     string data;
                     _Connection._SendBuffer[Priority.Medium].TryDequeue(out data);
-                    if (_Connection._WriteLine(data) == false) {
+                    if (_Connection._WriteLine(data, cancelToken) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
@@ -1387,13 +1390,13 @@ namespace Meebey.SmartIrc4net
                 return true;
             }
 
-            private bool _CheckBelowMediumBuffer()
+            private bool _CheckBelowMediumBuffer(CancellationToken cancelToken)
             {
                 if ((_BelowMediumCount > 0) &&
                     (_BelowMediumSentCount < _BelowMediumThresholdCount)) {
                     string data;
                     _Connection._SendBuffer[Priority.BelowMedium].TryDequeue(out data);
-                    if (_Connection._WriteLine(data) == false) {
+                    if (_Connection._WriteLine(data, cancelToken) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
@@ -1410,7 +1413,7 @@ namespace Meebey.SmartIrc4net
                 return true;
             }
 
-            private bool _CheckLowBuffer()
+            private bool _CheckLowBuffer(CancellationToken cancelToken)
             {
                 if (_LowCount > 0) {
                     if ((_HighCount > 0) ||
@@ -1422,7 +1425,7 @@ namespace Meebey.SmartIrc4net
 
                     string data;
                     _Connection._SendBuffer[Priority.Low].TryDequeue(out data);
-                    if (_Connection._WriteLine(data) == false) {
+                    if (_Connection._WriteLine(data, cancelToken) == false) {
 #if LOG4NET
                         Logger.Queue.Warn("Sending data was not sucessful, data is requeued!");
 #endif
@@ -1448,6 +1451,7 @@ namespace Meebey.SmartIrc4net
         {
             private IrcConnection   _Connection;
             private Thread          _Thread;
+            private CancellationTokenSource _CancelSource = new CancellationTokenSource();
 
             /// <summary>
             /// 
@@ -1478,7 +1482,7 @@ namespace Meebey.SmartIrc4net
             /// </summary>
             public void Stop()
             {
-                _Thread.Abort();
+                _CancelSource.Cancel();
                 _Thread.Join();
             }
 
@@ -1488,8 +1492,15 @@ namespace Meebey.SmartIrc4net
                 Logger.Socket.Debug("IdleWorkerThread started");
 #endif
                 try {
+                    CancellationToken cancelToken = _CancelSource.Token;
                     while (_Connection.IsConnected ) {
-                        Thread.Sleep(_Connection._IdleWorkerInterval * 1000);
+                        cancelToken.WaitHandle.WaitOne(_Connection._IdleWorkerInterval * 1000);
+                        if (cancelToken.IsCancellationRequested) {
+#if LOG4NET
+                            Logger.Socket.Warn("IdleWorkerThread cancelled");
+#endif
+                            return;
+                        }
                         
                         // only send active pings if we are registered
                         if (!_Connection.IsRegistered) {
@@ -1525,11 +1536,6 @@ namespace Meebey.SmartIrc4net
                             break;
                         }
                     }
-                } catch (ThreadAbortException) {
-                    Thread.ResetAbort();
-#if LOG4NET
-                    Logger.Socket.Debug("IdleWorkerThread aborted");
-#endif
                 } catch (Exception ex) {
 #if LOG4NET
                     Logger.Socket.Error(ex);
