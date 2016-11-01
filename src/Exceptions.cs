@@ -33,7 +33,7 @@ namespace Meebey.SmartIrc4net
 {
     /// <threadsafety static="true" instance="true" />
     [Serializable()]
-    public class SmartIrc4netException : ApplicationException
+    public class SmartIrc4netException : Exception
     {
         public SmartIrc4netException() : base()
         {
