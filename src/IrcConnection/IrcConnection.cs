@@ -75,7 +75,7 @@ namespace Meebey.SmartIrc4net
         private int              _AutoRetryDelay = 30;
         private int              _AutoRetryLimit = 3;
         private bool             _AutoReconnect;
-        private Encoding         _Encoding = Encoding.Default;
+        private Encoding         _Encoding = Encoding.UTF8;
         public bool EnableUTF8Recode { get; set; }
         private int              _SocketReceiveTimeout  = 600;
         private int              _SocketSendTimeout = 600;
