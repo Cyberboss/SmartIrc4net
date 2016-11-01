@@ -32,6 +32,7 @@ using System.Collections;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -537,10 +538,10 @@ namespace Meebey.SmartIrc4net
             PingStopwatch = new Stopwatch();
             NextPingStopwatch = new Stopwatch();
 
-            Assembly assm = Assembly.GetAssembly(this.GetType());
-            AssemblyName assm_name = assm.GetName(false);
+            Assembly assm = this.GetType().GetTypeInfo().Assembly;
+            AssemblyName assm_name = assm.GetName();
 
-            AssemblyProductAttribute pr = (AssemblyProductAttribute)assm.GetCustomAttributes(typeof(AssemblyProductAttribute), false)[0];
+            AssemblyProductAttribute pr = (AssemblyProductAttribute)assm.GetCustomAttributes(typeof(AssemblyProductAttribute)).First();
 
             _VersionNumber = assm_name.Version.ToString();
             _VersionString = pr.Product+" "+_VersionNumber;
