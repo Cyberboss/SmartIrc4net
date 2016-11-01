@@ -535,7 +535,11 @@ namespace Meebey.SmartIrc4net
             if (username != null && username.Length > 0) {
                 _Username = username.Replace(" ", "");
             } else {
+#if NETCORE
+                _Username = "SI4N";
+#else
                 _Username = Environment.UserName.Replace(" ", "");
+#endif
             }
 
             if (password != null && password.Length > 0) {
