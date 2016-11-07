@@ -746,8 +746,12 @@ namespace Meebey.SmartIrc4net
             if (channelname == null) {
                 throw new System.ArgumentNullException("channelname");
             }
-            
-            return (Channel)_Channels[channelname];
+
+            Channel channel;
+            if (_Channels.TryGetValue(channelname, out channel)) {
+                return channel;
+            }
+            return null;
         }
 
         /// <summary>
