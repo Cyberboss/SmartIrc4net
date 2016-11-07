@@ -730,10 +730,12 @@ namespace Meebey.SmartIrc4net
             
             Channel channel = GetChannel(channelname);
             if (channel != null) {
-                return (ChannelUser)channel.UnsafeUsers[nickname];
-            } else {
-                return null;
-            } 
+                ChannelUser chanuser;
+                if (channel.UnsafeUsers.TryGetValue(nickname, out chanuser)) {
+                    return chanuser;
+                }
+            }
+            return null;
         }
 
         /// <summary>
