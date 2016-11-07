@@ -581,6 +581,11 @@ namespace Meebey.SmartIrc4net
             if (OnConnecting != null) {
                 OnConnecting(this, EventArgs.Empty);
             }
+
+            Task<IPAddress[]> addressesTask = Dns.GetHostAddressesAsync(Address);
+            addressesTask.Wait();
+            IPAddress[] addresses = addressesTask.Result;
+
             try {
                 _TcpClient = new TcpClient();
                 _TcpClient.NoDelay = true;
@@ -616,7 +621,7 @@ namespace Meebey.SmartIrc4net
                     proxyClient.TcpClient = _TcpClient;
                     proxyClient.CreateConnection(Address, port);
                 } else {
-                    _TcpClient.ConnectAsync(Address, port).Wait();
+                    _TcpClient.ConnectAsync(addresses[0], port).Wait();
                 }
                 
                 Stream stream = _TcpClient.GetStream();
