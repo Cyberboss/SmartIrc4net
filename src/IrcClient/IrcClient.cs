@@ -705,7 +705,11 @@ namespace Meebey.SmartIrc4net
                 throw new System.ArgumentNullException("nickname");
             }
 
-            return (IrcUser)_IrcUsers[nickname];
+            IrcUser user;
+            if (_IrcUsers.TryGetValue(nickname, out user)) {
+                return user;
+            }
+            return null;
         }
 
         /// <summary>
