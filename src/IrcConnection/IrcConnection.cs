@@ -1148,7 +1148,9 @@ namespace Meebey.SmartIrc4net
                         while (_Connection.IsConnected) {
                             readTask = _Connection._Reader.ReadLineAsync();
                             readTask.Wait(cancelToken);
-                            _Queue.Enqueue(readTask.Result);
+							if (cancelToken.IsCancellationRequested)
+								break;
+							_Queue.Enqueue(readTask.Result);
                             QueuedEvent.Set();
 #if LOG4NET
                             Logger.Socket.Debug("received: \""+readTask.Result+"\"");
