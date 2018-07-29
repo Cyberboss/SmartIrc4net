@@ -19,3 +19,5 @@ smartirc4net.pc
 *.suo
 *.user
 *.sln.docstates
+.vs
+packages
