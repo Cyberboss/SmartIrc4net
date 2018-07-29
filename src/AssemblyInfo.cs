@@ -59,7 +59,7 @@ using System.Runtime.InteropServices;
 // You can specify all values by your own or you can build default build and revision
 // numbers with the '*' character (the default):
 
-[assembly: AssemblyVersion("0.4.5.0")]
+[assembly: AssemblyVersion("0.4.6.0")]
 [assembly: AssemblyInformationalVersion("0.4.6")]
 
 // The following attributes specify the key for the sign of your assembly. See the
