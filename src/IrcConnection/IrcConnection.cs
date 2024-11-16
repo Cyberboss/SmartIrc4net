@@ -666,7 +666,7 @@ namespace Meebey.SmartIrc4net
                             var certs = new X509Certificate2Collection();
                             certs.Add(_SslClientCertificate);
                             sslStream.AuthenticateAsClientAsync(Address, certs,
-                                                                SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12,
+                                                                SslProtocols.Tls12,
                                                                 false).Wait();
                         } else {
                             sslStream.AuthenticateAsClientAsync(Address).Wait();
